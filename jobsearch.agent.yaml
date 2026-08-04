@@ -1,0 +1,209 @@
+name: Job Finder
+memory_config:
+  short_term: 
+    type: in_memory
+    context_strategy: summarize
+  long_term:
+    type: postgres
+    connection_string: postgresql://user:password@localhost:5432/agent_memory
+self_healing: true
+self_improving: true
+report_endpoint: "/heal"
+monitoring:
+  enabled: true
+  endpoint: "/logs"
+  metrics: 
+    - key: "node_execution_time"
+      type: histogram
+      description: "Time taken for each node to execute."
+    - key: "agent_response_time"
+      type: histogram
+      description: "Time taken for each agent to respond."
+    - key: "error_rate"
+      type: counter
+      description: "Number of errors encountered during execution."
+state:
+  resume_file: file
+  parsed_resume: ResumeModel
+  suggestions: SuggestionsModel
+  job_listings: array[JobListingModel]
+  job_analysis: array[JobAnalysisModel]
+  single_job_listing: JobListingModel
+  single_job_analysis: JobAnalysisModel
+  applications: array[ApplicationStatusModel]
+  preferences: UserPreferences
+
+tools:
+  document_parser: 
+    type: file_parser
+    description: Parses the uploaded resume file.
+    input: state.resume_file
+  document_editor:
+    type: text_editor
+    description: Allows the user to edit the parsed resume data.
+    input: state.parsed_resume
+  job_listings_fetcher:
+    type: api_caller
+    description: Fetches job listings based on user preferences.
+    input: [state.parsed_resume, state.preferences]
+  application_manager:
+    type: api_caller
+    description: Manages job applications.
+    input: [state.single_job_listing, state.parsed_resume]
+
+agents:
+  resume_agent:
+    description: Handles the parsing and editing of the user's resume.
+    tools: [document_parser, document_editor]
+    input: state.resume_file
+    output: state.parsed_resume
+    harness:
+      system_instruction: "Extract chronological job histories and rigid skill taxonomies without text summarization."
+      llm_config:
+        provider: google-genai
+        model: gemini-3.6-flash
+        temperature: 0.0
+      context_policy:
+        few_shot:
+          enabled: true
+          vector_store: "memory.persistent.successful_parses"
+          max_examples: 2
+          selection_strategy: "cosine_similarity"
+        window_management:
+          max_tokens: 8192
+          overflow_strategy: "summarize_oldest"
+    optimization:
+      evaluator: "schema_validator"
+      max_mutation_depth: 3 
+      fallback_harness: "default"
+      metrics:
+        - key: "json_parse_errors"
+          target: "== 0"
+        - key: "field_hallucination_rate"
+          target: "< 0.05"
+      on_underperformance:
+        action: "mutate_harness"
+        strategies: ["cot_prompt_injection", "temperature_cooling"]
+
+  suggestions_agent:
+    description: Provides suggestions for improving the resume based on parsed data.
+    input: state.parsed_resume
+    output: state.suggestions
+    harness:
+      system_instruction: "Provide high-impact structural adjustments optimized for Applicant Tracking Systems (ATS)."
+      llm_config:
+        provider: google-genai
+        model: gemini-3.5-flash
+        temperature: 0.7
+      context_policy:
+        pre_filters:
+          - target: state.parsed_resume
+            action: "strip_keys"
+            args: ["contact_info", "references"]
+    optimization:
+      evaluator: "user_feedback_loop"
+      metrics:
+        - key: "suggestion_acceptance_rate"
+          target: ">= 0.75"
+      on_underperformance:
+        action: "mutate_context"
+        strategies: ["few_shot_refresh", "dynamic_prompt_template_evolution"]
+
+  suggestions_editor_agent:
+    description: Verifies suggestions and allows/rejects suggested resume improvement.
+    tools: [document_editor]
+    input: state.suggestions
+    output: state.suggestions
+    
+  resume_updater_agent:
+    description: Updates the parsed resume based on agent-approved suggestions.
+    tools: [document_editor]
+    input: [state.suggestions, state.parsed_resume]
+    output: state.parsed_resume
+    
+  job_search_agent:
+    description: Fetches job listings based on user preferences and parsed resume data.
+    tools: [job_listings_fetcher]
+    input: [state.parsed_resume, state.preferences]
+    output: state.job_listings
+    
+  job_analyzer_agent:
+    description: Analyzes a single job listing.
+    input: state.single_job_listing
+    output: state.single_job_analysis
+    harness:
+      system_instruction: "Analyze the role mismatch. Output a score from 0-100 indicating fit."
+      llm_config:
+        provider: google-genai
+        model: gemini-3.6-flash
+        temperature: 0.2
+    optimization:
+      evaluator: "grounding_checker"
+      metrics:
+        - key: "false_positive_rate"
+          target: "< 0.10"
+      on_underperformance:
+        action: "mutate_harness"
+        strategies: ["negative_prompting_injection"]
+
+  application_agent:
+    description: Manages job applications.
+    tools: [application_manager]
+    input: [state.single_job_analysis, state.parsed_resume]
+    output: applications
+  
+nodes:
+  - id: file_upload
+    type: human_in_the_loop
+    input_type: file
+    routing:
+      - condition: "state.resume_file != null"
+        to: node_resume_processor
+    is_starting_node: true
+  - id: node_resume_processor
+    agent: resume_agent
+    trigger_cond: state.resume_file
+    to: [node_suggestions, node_job_search]
+
+  - id: node_suggestions
+    agent: suggestions_agent
+    trigger_cond: state.parsed_resume
+    routing:
+      - condition: "state.suggestions != null"
+        to: node_suggestions_editor
+
+  - id: node_suggestions_editor
+    type: human_in_the_loop
+    agent: suggestions_editor_agent
+    timeout_action: fallback_to_default
+    routing:
+      - condition: "state.suggestions.is_approved == true"
+        to: node_resume_updater
+
+  - id: node_resume_updater
+    agent: resume_updater_agent
+    to: null
+
+  - id: node_job_search
+    agent: job_search_agent
+    type: periodic
+    interval: 3600
+    gate_conditions:
+      - "state.preferences != null"
+    to: [node_job_analyzer]
+
+  - id: node_job_analyzer
+    agent: job_analyzer_agent
+    type: swarm
+    count: 10
+    strategy: map_split
+    distribution_method: round_robin
+    iterator:
+      loop_over: state.job_listings
+      yield_to: state.single_job_listing
+    to: [node_application]
+
+  - id: node_application
+    agent: application_agent
+    type: consumer
+    to: null
