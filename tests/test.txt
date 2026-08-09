@@ -1,0 +1,12 @@
+# Abrar's Resume
+SWE with 10y+ experience
+
+## Skills
+C/C++, C#, Javascript/Typescript, Python, ML, AI, DL
+
+## Education
+BSc in CSE from CUET
+CGPA: 3.98
+
+## Experience
+AI Engineer, Internship at BUET

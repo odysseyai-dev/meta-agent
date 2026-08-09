@@ -2,10 +2,8 @@ name: Job Finder
 memory_config:
   short_term: 
     type: in_memory
-    context_strategy: summarize
   long_term:
-    type: postgres
-    connection_string: postgresql://user:password@localhost:5432/agent_memory
+    type: in_memory
 self_healing: true
 self_improving: true
 report_endpoint: "/heal"
@@ -100,6 +98,11 @@ agents:
           - target: state.parsed_resume
             action: "strip_keys"
             args: ["contact_info", "references"]
+      input_template: |
+        Based on the following parsed resume data, provide a list of actionable suggestions for improvement. Focus on enhancing clarity, ATS compatibility, and overall impact. Avoid generic advice; be specific and relevant to the user's experience and skills.
+
+        Parsed Resume Data:
+        {{ state.resume_file }}
     optimization:
       evaluator: "user_feedback_loop"
       metrics:
@@ -114,6 +117,11 @@ agents:
     tools: [document_editor]
     input: state.suggestions
     output: state.suggestions
+    harness:
+      context_policy:
+        window_management:
+          max_tokens: 4096
+          overflow_strategy: "drop_oldest"
     
   resume_updater_agent:
     description: Updates the parsed resume based on agent-approved suggestions.
@@ -156,13 +164,14 @@ nodes:
   - id: file_upload
     type: human_in_the_loop
     input_type: file
+    input_state: resume_file
     routing:
       - condition: "state.resume_file != null"
         to: node_resume_processor
     is_starting_node: true
   - id: node_resume_processor
     agent: resume_agent
-    trigger_cond: state.resume_file
+    trigger_cond: "state.resume_file != null"
     to: [node_suggestions, node_job_search]
 
   - id: node_suggestions
