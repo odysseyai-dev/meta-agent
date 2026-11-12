@@ -61,7 +61,7 @@ def apply_context_policy(
         system_msg = messages[0] if isinstance(messages[0], SystemMessage) else None
         chat_history = messages[1:] if system_msg else messages
 
-        preserve_count = window_mgmt.get("preserve_recent_count", 2)
+        preserve_count = window_mgmt.get("preserve_recent_count", 1)
         if len(chat_history) <= preserve_count:
             return messages
 
@@ -88,7 +88,7 @@ def apply_context_policy(
         retained.append(summary_msg)
         retained.extend(recent_messages)
 
-        return trim_messages(
+        trimmed = trim_messages(
             retained,
             max_tokens=max_tokens,
             strategy="last",
@@ -96,6 +96,16 @@ def apply_context_policy(
             include_system=True,
             allow_partial=False,
         )
+        if not any("Earlier context" in getattr(m, 'content', '') for m in trimmed):
+            # Ensure summary is not discarded if trim_messages pruned it
+            fallback = []
+            if system_msg:
+                fallback.append(system_msg)
+            fallback.append(summary_msg)
+            if recent_messages:
+                fallback.append(recent_messages[-1])
+            return fallback
+        return trimmed
 
     return messages
 
@@ -105,8 +115,9 @@ def create_memory(memory_config: Optional[Dict[str, Any]] = None):
     store = None
         
     if memory_config:
-        short_term = memory_config.get('short_term', {})
-        long_term = memory_config.get('long_term', {})
+        stores = memory_config.get('stores', memory_config)
+        short_term = stores.get('short_term', {})
+        long_term = stores.get('long_term', {})
         
         match short_term.get('type', None):
             case "in_memory":

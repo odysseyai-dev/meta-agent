@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meta-agent"
+version = "0.1.0"
+description = "A YAML-defined agent network compiler built on LangGraph."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "jinja2>=3.1",
+    "langchain>=1.0",
+    "langchain-core>=1.0",
+    "langchain-google-genai>=4.0",
+    "langgraph>=1.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+meta-agent = "compiler:main"
+
+[tool.setuptools]
+py-modules = [
+    "compiler",
+    "evaluators",
+    "graph",
+    "memory",
+    "nodes",
+    "optimization",
+    "resilience",
+    "state",
+    "tools",
+    "utils",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -12,7 +12,7 @@ class ContextPolicyTests(unittest.TestCase):
             harness={
                 "context_policy": {
                     "window_management": {
-                        "max_tokens": 40,
+                        "max_tokens": 30,
                         "overflow_strategy": "summarize_oldest",
                     }
                 }

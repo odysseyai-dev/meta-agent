@@ -1,205 +1,346 @@
+# =============================================================================
+# Job Finder - agentic network definition  (framework schema v1)
+# Companion python modules (referenced by dotted path below):
+#   data_models.py  -> pydantic models (ResumeModel, SuggestionsModel, ...)
+#   tool_defs.py    -> tool implementations
+#   evaluators.py   -> evaluator functions used by optimization blocks
+#   hooks.py        -> optional custom hooks / reducers / filters
+# =============================================================================
+schema_version: "1.0"
 name: Job Finder
-memory_config:
-  short_term: 
-    type: in_memory
-  long_term:
-    type: in_memory
-self_healing: true
-self_improving: true
-report_endpoint: "/heal"
-monitoring:
-  enabled: true
-  endpoint: "/logs"
-  metrics: 
-    - key: "node_execution_time"
-      type: histogram
-      description: "Time taken for each node to execute."
-    - key: "agent_response_time"
-      type: histogram
-      description: "Time taken for each agent to respond."
-    - key: "error_rate"
-      type: counter
-      description: "Number of errors encountered during execution."
-state:
-  resume_file: file
-  parsed_resume: ResumeModel
-  suggestions: SuggestionsModel
-  job_listings: array[JobListingModel]
-  job_analysis: array[JobAnalysisModel]
-  single_job_listing: JobListingModel
-  single_job_analysis: JobAnalysisModel
-  applications: array[ApplicationStatusModel]
-  preferences: UserPreferences
+description: Parses a resume, suggests improvements, finds and scores jobs, and manages applications.
+entry_node: file_upload
 
+modules:
+  data_models: data_models
+  tools: tool_defs
+  evaluators: evaluators
+  hooks: hooks
+
+# -----------------------------------------------------------------------------
+# Runtime: memory, resilience, observability, self-improvement (global policy)
+# -----------------------------------------------------------------------------
+runtime:
+  memory:
+    stores:
+      short_term:                       # per-run scratch, cleared when run ends
+        type: in_memory
+        scope: run
+      long_term:                        # survives across runs (swap backend for prod)
+        type: in_memory
+        scope: global
+        namespaces: [successful_parses, accepted_suggestions, feedback]
+    # agents reference stores as  memory.<store>.<namespace>
+
+  concurrency:
+    max_parallel_nodes: 10
+    max_parallel_llm_calls: 10
+
+  resilience:
+    default_retry:
+      max_attempts: 3
+      backoff: exponential
+      initial_delay_s: 1
+      max_delay_s: 30
+      retry_on: [timeout, rate_limit, transient_error, schema_violation]
+    default_timeout_s: 60
+    on_unhandled_error: route_to_healer   # -> self_healing
+
+  self_healing:
+    enabled: true
+    endpoint: "/heal"                   # receives error reports (was top-level report_endpoint)
+    strategies: [retry, fallback_harness, fallback_model, escalate_to_human]
+    max_heal_attempts_per_node: 2
+
+  self_improving:
+    enabled: true
+    # Guardrails for every agent's `optimization` block
+    guardrails:
+      require_versioning: true          # each mutated harness is stored as a new version
+      auto_rollback_on_regression: true
+      max_mutation_depth: 3             # global ceiling; agents may only lower it
+      human_approval_for: [system_instruction]   # prompt-core changes need approval
+      min_samples_before_mutation: 20
+
+  monitoring:
+    enabled: true
+    endpoint: "/logs"
+    log_level: info
+    tracing: true
+    # Metrics are emitted automatically with labels {agent, node, run_id}
+    metrics:
+      - { key: node_execution_time,   type: histogram, unit: seconds, description: "Time taken for each node to execute." }
+      - { key: agent_response_time,   type: histogram, unit: seconds, description: "Time taken for each agent to respond." }
+      - { key: error_rate,            type: counter,   description: "Errors encountered during execution." }
+      - { key: retry_count,           type: counter,   description: "Retries triggered per node." }
+      - { key: llm_tokens_used,       type: counter,   description: "Tokens consumed per agent." }
+      - { key: json_parse_errors,     type: counter,   description: "Schema/JSON parse failures (resume_agent)." }
+      - { key: field_hallucination_rate,  type: gauge, description: "Share of extracted fields not grounded in source." }
+      - { key: suggestion_acceptance_rate, type: gauge, description: "Approved / proposed suggestions." }
+      - { key: false_positive_rate,   type: gauge,     description: "Jobs scored high-fit that the user rejected." }
+
+# -----------------------------------------------------------------------------
+# Default harness: inherited by every agent unless overridden (deep-merge)
+# (model ids are placeholders - set to the ones you actually have access to)
+# -----------------------------------------------------------------------------
+harness_defaults:
+  id: default
+  llm_config:
+    provider: google-genai
+    model: gemini-3.6-flash
+    temperature: 0.2
+  fallback_llm_config:
+    model: gemini-3.5-flash
+    temperature: 0.0
+  system_instruction: "You are a precise, helpful assistant. Follow the output schema exactly."
+  output_validation:
+    enforce_schema: true
+    on_invalid: retry
+  context_policy:
+    window_management:
+      max_tokens: 8192
+      overflow_strategy: summarize_oldest   # summarize_oldest | drop_oldest | truncate
+
+# -----------------------------------------------------------------------------
+# State (typed; models live in data_models.py)
+# -----------------------------------------------------------------------------
+state:
+  resume_file:            { type: file }
+  preferences:            { type: UserPreferences }
+  parsed_resume:          { type: ResumeModel }
+  suggestions:            { type: SuggestionsModel }
+  job_listings:           { type: "array[JobListingModel]",        reducer: dedupe_by_id }   # accumulates over periodic runs
+  job_analysis:           { type: "array[JobAnalysisModel]",       reducer: append }          # collected from swarm
+  applications:           { type: "array[ApplicationStatusModel]", reducer: append }
+  # Worker-scoped state: each swarm worker gets its own copy (no shared-write race)
+  single_job_listing:     { type: JobListingModel,     scope: worker }
+  single_job_analysis:    { type: JobAnalysisModel,    scope: worker }
+  approved_job_analysis:  { type: JobAnalysisModel,    scope: worker }
+
+# -----------------------------------------------------------------------------
+# Tools: definitions only. Agents bind inputs/outputs; tools declare schemas.
+# -----------------------------------------------------------------------------
 tools:
-  document_parser: 
+  document_parser:
     type: file_parser
-    description: Parses the uploaded resume file.
-    input: state.resume_file
+    impl: tools.document_parser
+    description: Parses the uploaded resume file (pdf/docx/txt).
+    input_schema:  { file: file }
+    output_schema: ResumeModel
+    timeout_s: 120
+
   document_editor:
     type: text_editor
-    description: Allows the user to edit the parsed resume data.
-    input: state.parsed_resume
+    impl: tools.document_editor
+    description: Applies structured edits (JSON-patch style) to a document model.
+    input_schema:  { target: ResumeModel, edits: "array[EditOperation]" }
+    output_schema: ResumeModel
+    side_effects: state_write
+
   job_listings_fetcher:
     type: api_caller
-    description: Fetches job listings based on user preferences.
-    input: [state.parsed_resume, state.preferences]
+    impl: tools.job_listings_fetcher
+    description: Fetches job listings matching preferences and resume skills.
+    input_schema:  { resume: ResumeModel, preferences: UserPreferences }
+    output_schema: "array[JobListingModel]"
+    rate_limit: { calls: 30, per_seconds: 60 }
+    auth: { type: api_key, env: JOB_API_KEY }
+
   application_manager:
     type: api_caller
-    description: Manages job applications.
-    input: [state.single_job_listing, state.parsed_resume]
+    impl: tools.application_manager
+    description: Submits and tracks a job application.
+    input_schema:  { job: JobListingModel, resume: ResumeModel, analysis: JobAnalysisModel, dry_run: boolean }
+    output_schema: ApplicationStatusModel
+    side_effects: external_write          # irreversible -> guarded by human approval node
+    auth: { type: api_key, env: APPLICATION_API_KEY }
 
+# -----------------------------------------------------------------------------
+# Evaluators (implementations in evaluators.py)
+# -----------------------------------------------------------------------------
+evaluators:
+  schema_validator:   { impl: evaluators.schema_validator,  type: automatic }
+  grounding_checker:  { impl: evaluators.grounding_checker, type: automatic }
+  user_feedback_loop: { impl: evaluators.user_feedback,     type: human_feedback, source: state.suggestions }
+
+# -----------------------------------------------------------------------------
+# Agents
+# -----------------------------------------------------------------------------
 agents:
+
   resume_agent:
-    description: Handles the parsing and editing of the user's resume.
+    description: Parses the user's resume file into a structured ResumeModel.
     tools: [document_parser, document_editor]
-    input: state.resume_file
+    input:  { resume_file: state.resume_file }
     output: state.parsed_resume
     harness:
       system_instruction: "Extract chronological job histories and rigid skill taxonomies without text summarization."
-      llm_config:
-        provider: google-genai
-        model: gemini-3.6-flash
-        temperature: 0.0
+      llm_config: { temperature: 0.0 }
       context_policy:
         few_shot:
           enabled: true
-          vector_store: "memory.persistent.successful_parses"
+          vector_store: memory.long_term.successful_parses
           max_examples: 2
-          selection_strategy: "cosine_similarity"
-        window_management:
-          max_tokens: 8192
-          overflow_strategy: "summarize_oldest"
+          selection_strategy: cosine_similarity
+        window_management: { max_tokens: 8192, overflow_strategy: summarize_oldest }
     optimization:
-      evaluator: "schema_validator"
-      max_mutation_depth: 3 
-      fallback_harness: "default"
+      evaluator: schema_validator
+      max_mutation_depth: 3
+      fallback_harness: default
       metrics:
-        - key: "json_parse_errors"
-          target: "== 0"
-        - key: "field_hallucination_rate"
-          target: "< 0.05"
+        - { key: json_parse_errors,         target: "== 0" }
+        - { key: field_hallucination_rate,  target: "< 0.05" }
       on_underperformance:
-        action: "mutate_harness"
-        strategies: ["cot_prompt_injection", "temperature_cooling"]
+        action: mutate_harness
+        strategies: [cot_prompt_injection, temperature_cooling]
+      on_success:
+        action: store_example
+        target: memory.long_term.successful_parses
 
   suggestions_agent:
-    description: Provides suggestions for improving the resume based on parsed data.
-    input: state.parsed_resume
+    description: Proposes ATS-focused improvements to the parsed resume.
+    input:  { resume: state.parsed_resume }
     output: state.suggestions
     harness:
       system_instruction: "Provide high-impact structural adjustments optimized for Applicant Tracking Systems (ATS)."
-      llm_config:
-        provider: google-genai
-        model: gemini-3.5-flash
-        temperature: 0.7
+      llm_config: { model: gemini-3.5-flash, temperature: 0.7 }
       context_policy:
-        pre_filters:
-          - target: state.parsed_resume
-            action: "strip_keys"
-            args: ["contact_info", "references"]
+        pre_filters:                      # applied BEFORE the prompt is rendered (privacy)
+          - target: input.resume
+            action: strip_keys
+            args: [contact_info, references]
       input_template: |
-        Based on the following parsed resume data, provide a list of actionable suggestions for improvement. Focus on enhancing clarity, ATS compatibility, and overall impact. Avoid generic advice; be specific and relevant to the user's experience and skills.
+        Based on the following parsed resume data, provide a list of actionable suggestions for improvement.
+        Focus on clarity, ATS compatibility, and overall impact. Avoid generic advice; be specific to the
+        user's experience and skills. Each suggestion must reference the resume section it changes.
 
         Parsed Resume Data:
-        {{ state.resume_file }}
+        {{ input.resume }}
     optimization:
-      evaluator: "user_feedback_loop"
+      evaluator: user_feedback_loop
       metrics:
-        - key: "suggestion_acceptance_rate"
-          target: ">= 0.75"
+        - { key: suggestion_acceptance_rate, target: ">= 0.75" }
       on_underperformance:
-        action: "mutate_context"
-        strategies: ["few_shot_refresh", "dynamic_prompt_template_evolution"]
+        action: mutate_context
+        strategies: [few_shot_refresh, dynamic_prompt_template_evolution]
+        few_shot_source: memory.long_term.accepted_suggestions
 
   suggestions_editor_agent:
-    description: Verifies suggestions and allows/rejects suggested resume improvement.
+    description: Assists the human reviewer in approving/rejecting each suggestion and records the decision.
     tools: [document_editor]
-    input: state.suggestions
-    output: state.suggestions
+    input:  { suggestions: state.suggestions }
+    output: state.suggestions            # same model, with per-item `status` and overall `is_approved`
     harness:
       context_policy:
-        window_management:
-          max_tokens: 4096
-          overflow_strategy: "drop_oldest"
-    
+        window_management: { max_tokens: 4096, overflow_strategy: drop_oldest }
+
   resume_updater_agent:
-    description: Updates the parsed resume based on agent-approved suggestions.
+    description: Applies approved suggestions to the parsed resume.
     tools: [document_editor]
-    input: [state.suggestions, state.parsed_resume]
+    input:  { suggestions: state.suggestions, resume: state.parsed_resume }
     output: state.parsed_resume
-    
+    harness:
+      system_instruction: "Apply only suggestions with status=approved. Never invent facts or alter dates, employers, or titles."
+      llm_config: { temperature: 0.0 }
+
   job_search_agent:
-    description: Fetches job listings based on user preferences and parsed resume data.
+    description: Fetches job listings based on preferences and parsed resume.
     tools: [job_listings_fetcher]
-    input: [state.parsed_resume, state.preferences]
+    input:  { resume: state.parsed_resume, preferences: state.preferences }
     output: state.job_listings
-    
+    harness:
+      system_instruction: "Build precise queries from skills and preferences; return only listings the API provides."
+      llm_config: { temperature: 0.0 }
+
   job_analyzer_agent:
-    description: Analyzes a single job listing.
-    input: state.single_job_listing
+    description: Scores how well a single job listing fits the resume.
+    input:  { job: state.single_job_listing, resume: state.parsed_resume }
     output: state.single_job_analysis
     harness:
-      system_instruction: "Analyze the role mismatch. Output a score from 0-100 indicating fit."
-      llm_config:
-        provider: google-genai
-        model: gemini-3.6-flash
-        temperature: 0.2
+      system_instruction: >
+        Compare the job requirements to the resume. Identify matches and gaps (role mismatch),
+        then output a fit score from 0-100 with grounded evidence quotes from the resume.
     optimization:
-      evaluator: "grounding_checker"
+      evaluator: grounding_checker
       metrics:
-        - key: "false_positive_rate"
-          target: "< 0.10"
+        - { key: false_positive_rate, target: "< 0.10" }
       on_underperformance:
-        action: "mutate_harness"
-        strategies: ["negative_prompting_injection"]
+        action: mutate_harness
+        strategies: [negative_prompting_injection]
 
   application_agent:
-    description: Manages job applications.
+    description: Prepares and submits applications for approved, high-fit jobs.
     tools: [application_manager]
-    input: [state.single_job_analysis, state.parsed_resume]
-    output: applications
-  
+    input:  { analysis: state.approved_job_analysis, resume: state.parsed_resume }
+    output: state.applications
+    harness:
+      system_instruction: "Prepare the application exactly from approved data. Never fabricate qualifications."
+      llm_config: { temperature: 0.0 }
+    retry: { max_attempts: 1 }           # external writes: do not blindly retry
+
+# -----------------------------------------------------------------------------
+# Nodes (graph). Node types: human_in_the_loop | agent (default) | periodic | swarm | consumer
+# Routing is uniform: routing: [{when: <expr>, to: <node|end>}], with optional `default`.
+# -----------------------------------------------------------------------------
 nodes:
+
   - id: file_upload
     type: human_in_the_loop
     input_type: file
     input_state: resume_file
     routing:
-      - condition: "state.resume_file != null"
-        to: node_resume_processor
-    is_starting_node: true
+      - { when: "state.resume_file != null", to: node_resume_processor }
+
+  - id: node_preferences
+    type: human_in_the_loop             # was missing: nothing populated state.preferences
+    input_type: form
+    input_state: preferences
+    required_before: [node_job_search]
+    routing:
+      - { when: "state.preferences != null", to: node_job_search }
+
   - id: node_resume_processor
     agent: resume_agent
-    trigger_cond: "state.resume_file != null"
-    to: [node_suggestions, node_job_search]
+    trigger_when: "state.resume_file != null"
+    routing:
+      - { when: "state.parsed_resume != null", to: [node_suggestions, node_preferences] }   # parallel fan-out
+    on_error: { action: route_to_healer, then: file_upload }
 
+  # ---- suggestions branch ---------------------------------------------------
   - id: node_suggestions
     agent: suggestions_agent
-    trigger_cond: state.parsed_resume
+    trigger_when: "state.parsed_resume != null"
     routing:
-      - condition: "state.suggestions != null"
-        to: node_suggestions_editor
+      - { when: "state.suggestions != null", to: node_suggestions_editor }
 
   - id: node_suggestions_editor
     type: human_in_the_loop
     agent: suggestions_editor_agent
-    timeout_action: fallback_to_default
+    timeout_s: 86400
+    timeout_action: skip_branch          # explicit (was "fallback_to_default"): resume stays unchanged
     routing:
-      - condition: "state.suggestions.is_approved == true"
-        to: node_resume_updater
+      - { when: "state.suggestions.is_approved == true",  to: node_resume_updater }
+      - { when: "state.suggestions.is_approved == false", to: end }
+    default: end
 
   - id: node_resume_updater
     agent: resume_updater_agent
-    to: null
+    routing:
+      - { when: "true", to: end }
+    # Optional: re-run job search with the improved resume
+    # routing: [{ when: "true", to: node_job_search }]
 
+  # ---- job branch -----------------------------------------------------------
   - id: node_job_search
     agent: job_search_agent
     type: periodic
-    interval: 3600
+    interval_s: 3600
     gate_conditions:
       - "state.preferences != null"
-    to: [node_job_analyzer]
+      - "state.parsed_resume != null"
+    max_runs: null                       # run until stopped
+    routing:
+      - { when: "len(state.job_listings) > 0", to: node_job_analyzer }
 
   - id: node_job_analyzer
     agent: job_analyzer_agent
@@ -209,10 +350,31 @@ nodes:
     distribution_method: round_robin
     iterator:
       loop_over: state.job_listings
-      yield_to: state.single_job_listing
-    to: [node_application]
+      filter: "item.id not in state.job_analysis.job_ids"   # skip already-analyzed jobs on periodic runs
+      yield_to: state.single_job_listing                    # worker-scoped, no race
+    collect:                             # reduce worker results back to shared state
+      from: state.single_job_analysis
+      to: state.job_analysis
+      reducer: append
+    routing:
+      - { when: "state.job_analysis != null", to: node_application_review }
+
+  - id: node_application_review
+    type: human_in_the_loop             # applications are irreversible: require approval
+    review:
+      source: state.job_analysis
+      pre_filter: "item.score >= state.preferences.min_fit_score"
+      select_to: state.approved_job_analysis
+    auto_approve_if: "state.preferences.auto_apply == true and item.score >= 90"
+    timeout_action: skip_branch
+    routing:
+      - { when: "len(state.approved_job_analysis) > 0", to: node_application }
 
   - id: node_application
     agent: application_agent
     type: consumer
-    to: null
+    iterator:
+      loop_over: state.approved_job_analysis
+      yield_to: state.approved_job_analysis
+    routing:
+      - { when: "true", to: end }

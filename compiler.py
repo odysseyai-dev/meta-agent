@@ -1,12 +1,14 @@
 # compiler.py
 
+import os
+from pathlib import Path
 import yaml
 
 from langgraph.types import Send, interrupt, Command
 from langgraph.graph.message import add_messages
 
 from graph import create_graph
-from memory import create_memory
+from memory import create_memory, apply_context_policy
 from nodes import create_agents
 from state import create_states
 from tools import create_tools
@@ -63,23 +65,40 @@ def print_result(result):
 
 def main():
     agent_config = None
+    project_root = Path(__file__).resolve().parent
+    yaml_path = project_root / 'tests' / 'jobsearch.agent.yaml'
+    if not yaml_path.exists():
+        yaml_path = project_root / 'jobsearch.agent.yaml'
     
-    with open('jobsearch.agent.yaml', 'r') as file:
+    with open(yaml_path, 'r') as file:
         try:
             agent_config = yaml.safe_load(file)
         except yaml.YAMLError as error:
             print(f"Error parsing YAML file: {error}")
-    
+
+    modules = agent_config.get('modules', {})
     network_nodes = agent_config.get('nodes', [])
-    memory_config = agent_config.get('memory_config', None)
+    memory_config = agent_config.get('runtime', {}).get('memory', None) or agent_config.get('memory_config', None)
+    entry_node = agent_config.get('entry_node', None)
+    harness_defaults = agent_config.get('harness_defaults', {})
     config = {"configurable": {"thread_id": "session-1"}}
     
-    network_state = create_states(agent_config.get('state', {}))
-    tools = create_tools(agent_config.get('tools', {}))
-    agents = create_agents(agent_config.get('agents', {}), tools)
+    network_state = create_states(agent_config.get('state', {}), modules)
+    tools = create_tools(agent_config.get('tools', {}), modules)
+    agents = create_agents(agent_config.get('agents', {}), tools, harness_defaults=harness_defaults)
     checkpointer, store = create_memory(memory_config)
 
-    workflow = create_graph(network_state, agents, network_nodes, memory_config=memory_config, tools=tools)
+    workflow = create_graph(
+        network_state,
+        agents,
+        network_nodes,
+        memory_config=memory_config,
+        tools=tools,
+        entry_node=entry_node,
+        runtime_config=agent_config.get('runtime', {}),
+        evaluator_config=agent_config.get('evaluators', {}),
+        modules_config=modules,
+    )
     
     compiled = workflow.compile(checkpointer=checkpointer, store=store)
     compiled.get_graph().print_ascii()
