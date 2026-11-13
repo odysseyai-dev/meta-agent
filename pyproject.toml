@@ -9,6 +9,7 @@ description = "A YAML-defined agent network compiler built on LangGraph."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "grandalf>=0.8",
     "jinja2>=3.1",
     "langchain>=1.0",
     "langchain-core>=1.0",

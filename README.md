@@ -58,7 +58,7 @@ pip install py-meta-agent
 Or install from source for development:
 
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/odysseyai-dev/meta-agent.git
 cd meta-agent
 python -m venv .venv
 source .venv/bin/activate
