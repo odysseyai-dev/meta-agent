@@ -1,6 +1,6 @@
 import unittest
 import ast
-from utils import evaluate_condition, StateConditionEvaluator
+from src.meta_agent_madcoderme.utils import evaluate_condition, StateConditionEvaluator
 
 class ConditionEvaluatorTests(unittest.TestCase):
     def setUp(self):

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-from compiler import apply_context_policy
+from src.meta_agent_madcoderme.compiler import apply_context_policy
 
 
 class ContextPolicyTests(unittest.TestCase):

@@ -9,7 +9,7 @@ from langchain_core.tools import BaseTool
 
 from langgraph.types import interrupt
 from langgraph.store.base import BaseStore
-from utils import deep_merge, extract_input_context, ConfigResolver
+from .utils import deep_merge, extract_input_context, ConfigResolver
 
 class NetworkAgent:
     """Represents an agent in the agentic network with harness, retry, and optimization specs."""

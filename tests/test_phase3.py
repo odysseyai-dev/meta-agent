@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils import apply_pre_filters, extract_input_context, render_input_prompt
-from nodes import NetworkAgent
+from src.meta_agent_madcoderme.utils import apply_pre_filters, extract_input_context, render_input_prompt
+from src.meta_agent_madcoderme.nodes import NetworkAgent
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ class TestPreFilterInNodeExecutor(unittest.TestCase):
         'contact_info' from that value before rendering occurs, so the rendered
         prompt must NOT contain the contact info.
         """
-        from graph import make_node_executor
+        from src.meta_agent_madcoderme.graph import make_node_executor
 
         resume_data = {
             "name": "Eve",
@@ -133,10 +133,11 @@ class TestPreFilterInNodeExecutor(unittest.TestCase):
         # We'll verify by inspecting which state reaches render_input_prompt.
         rendered_prompts = []
 
-        original_render = __import__("utils").render_input_prompt
+        import src.meta_agent_madcoderme.utils as utils_module
+        original_render_fn = utils_module.render_input_prompt
 
         def capturing_render(agent_obj, s):
-            result = original_render(agent_obj, s)
+            result = original_render_fn(agent_obj, s)
             rendered_prompts.append(result)
             return result
 
@@ -149,8 +150,6 @@ class TestPreFilterInNodeExecutor(unittest.TestCase):
 
         state = {"parsed_resume": resume_data}
 
-        import utils as utils_module
-        original_render_fn = utils_module.render_input_prompt
         utils_module.render_input_prompt = capturing_render
 
         try:
@@ -198,7 +197,7 @@ class TestFewShotInjection(unittest.TestCase):
 
     def test_few_shot_disabled_does_not_query_store(self):
         """When few_shot.enabled is False, the store must not be searched for examples."""
-        from graph import make_node_executor
+        from src.meta_agent_madcoderme.graph import make_node_executor
 
         agent = self._make_agent_with_few_shot(enabled=False)
 
@@ -223,7 +222,7 @@ class TestFewShotInjection(unittest.TestCase):
 
     def test_few_shot_enabled_queries_store_with_correct_namespace(self):
         """When few_shot.enabled is True, store is searched with (namespace_key, 'global')."""
-        from graph import make_node_executor
+        from src.meta_agent_madcoderme.graph import make_node_executor
 
         agent = self._make_agent_with_few_shot(enabled=True, max_examples=2)
 
@@ -257,7 +256,7 @@ class TestFewShotInjection(unittest.TestCase):
 
     def test_few_shot_namespace_derived_from_vector_store_path(self):
         """Namespace key is the last segment of the vector_store path."""
-        from graph import make_node_executor
+        from src.meta_agent_madcoderme.graph import make_node_executor
 
         agent = self._make_agent_with_few_shot(
             enabled=True,
@@ -281,7 +280,7 @@ class TestFewShotInjection(unittest.TestCase):
 
     def test_few_shot_store_error_degrades_gracefully(self):
         """If store.search raises for the few-shot namespace, execution continues."""
-        from graph import make_node_executor
+        from src.meta_agent_madcoderme.graph import make_node_executor
 
         agent = self._make_agent_with_few_shot(enabled=True)
 
@@ -306,7 +305,7 @@ class TestFewShotInjection(unittest.TestCase):
 
     def test_few_shot_absent_config_does_not_crash(self):
         """Agent with no few_shot config must not crash."""
-        from graph import make_node_executor
+        from src.meta_agent_madcoderme.graph import make_node_executor
 
         agent = NetworkAgent()
         agent.id = "plain_agent"

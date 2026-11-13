@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from utils import extract_input_context, render_input_prompt
+from src.meta_agent_madcoderme.utils import extract_input_context, render_input_prompt
 
 class PromptRenderingTests(unittest.TestCase):
     def setUp(self):

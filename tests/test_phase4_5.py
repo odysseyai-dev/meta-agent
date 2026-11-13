@@ -9,12 +9,12 @@ from unittest.mock import patch
 
 from langgraph.types import Command
 
-import builder
-from graph import create_graph
-from optimization import apply_optimization, evaluate_metrics, target_met
-from resilience import GraphRegistry, SelfHealer, retry_call
-from tools import _guard_tool
-from nodes import NetworkAgent
+import src.meta_agent_madcoderme.builder as builder
+from src.meta_agent_madcoderme.graph import create_graph
+from src.meta_agent_madcoderme.optimization import apply_optimization, evaluate_metrics, target_met
+from src.meta_agent_madcoderme.resilience import GraphRegistry, SelfHealer, retry_call
+from src.meta_agent_madcoderme.tools import _guard_tool
+from src.meta_agent_madcoderme.nodes import NetworkAgent
 
 
 class Phase45Tests(unittest.TestCase):
@@ -275,9 +275,9 @@ nodes:
     def test_builder_generates_companion_modules_ready_to_compile(self):
         import sys
         import yaml
-        from state import create_states
-        from tools import create_tools
-        from nodes import create_agents
+        from src.meta_agent_madcoderme.state import create_states
+        from src.meta_agent_madcoderme.tools import create_tools
+        from src.meta_agent_madcoderme.nodes import create_agents
 
         sample_yaml = """schema_version: "1.0"
 name: Support Triage

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, TypedDict, Annotated
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
-from utils import resolve_module
+from .utils import resolve_module
 
 def reducer_append(existing: Optional[List[Any]], new: Any) -> List[Any]:
     """Appends new item(s) to an existing list state."""

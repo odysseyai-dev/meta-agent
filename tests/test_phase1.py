@@ -3,10 +3,10 @@ import os
 import yaml
 from typing import get_origin, get_args, Annotated, List
 
-from utils import resolve_module, deep_merge
-from state import create_states, reducer_append, reducer_dedupe_by_id, get_state_scopes
-from nodes import NetworkAgent, create_agents
-from tools import create_tools
+from src.meta_agent_madcoderme.utils import resolve_module, deep_merge
+from src.meta_agent_madcoderme.state import create_states, reducer_append, reducer_dedupe_by_id, get_state_scopes
+from src.meta_agent_madcoderme.nodes import NetworkAgent, create_agents
+from src.meta_agent_madcoderme.tools import create_tools
 
 class Phase1VerificationTests(unittest.TestCase):
     @classmethod

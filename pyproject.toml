@@ -19,23 +19,14 @@ dependencies = [
 ]
 
 [project.scripts]
-meta-agent = "compiler:main"
-meta-agent-build = "builder:main"
+meta-agent = "meta_agent_madcoderme.compiler:main"
+meta-agent-build = "meta_agent_madcoderme.builder:main"
 
 [tool.setuptools]
-py-modules = [
-    "builder",
-    "compiler",
-    "evaluators",
-    "graph",
-    "memory",
-    "nodes",
-    "optimization",
-    "resilience",
-    "state",
-    "tools",
-    "utils",
-]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

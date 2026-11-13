@@ -1,7 +1,7 @@
 import unittest
 import os
 import yaml
-from utils import deep_merge
+from src.meta_agent_madcoderme.utils import deep_merge
 
 class CompilerConfigTests(unittest.TestCase):
     @classmethod

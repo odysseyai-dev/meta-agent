@@ -49,19 +49,19 @@ meta-agent-build "Build a customer support triage network with intake, specialis
   -o support/support_triage.agent.yaml
 
 # Or interactive wizard mode (prompts for name, goal, agents, tools, features, output file)
-python builder.py -i
+python -m meta_agent_madcoderme.builder -i
 ```
 
-Pass `--yaml-only` if you only want the `.agent.yaml` file without generating companion Python modules. You can also choose the builder LLM with `--provider`, `--model`, and `--temperature` (defaults: `google-genai`, `gemini-3.6-flash`, `0.2`), or call `builder.generate_agent_yaml(spec)` and `builder.generate_companion_modules(yaml_text, spec)` from Python.
+Pass `--yaml-only` if you only want the `.agent.yaml` file without generating companion Python modules. You can also choose the builder LLM with `--provider`, `--model`, and `--temperature` (defaults: `google-genai`, `gemini-3.6-flash`, `0.2`), or call `meta_agent_madcoderme.generate_agent_yaml(spec)` and `meta_agent_madcoderme.generate_companion_modules(yaml_text, spec)` from Python.
 
 ### 2. Compile & Run a Network (`compiler.py`)
 
-The compiler (`compiler.py` / `meta-agent`) is the core entrypoint. Pass any `.agent.yaml` file as a positional argument:
+The compiler (`meta_agent_madcoderme.compiler` / `meta-agent`) is the core entrypoint. Pass any `.agent.yaml` file as a positional argument:
 
 ```bash
 meta-agent tests/jobsearch.agent.yaml
 # or directly:
-python compiler.py tests/jobsearch.agent.yaml
+python -m meta_agent_madcoderme.compiler tests/jobsearch.agent.yaml
 ```
 
 The compiler:
@@ -78,11 +78,13 @@ You can embed the compiler directly in any Python application to load high-level
 import yaml
 from langgraph.types import Command
 
-from state import create_states
-from tools import create_tools
-from nodes import create_agents
-from memory import create_memory
-from graph import create_graph
+from meta_agent_madcoderme import (
+    create_states,
+    create_tools,
+    create_agents,
+    create_memory,
+    create_graph,
+)
 
 with open("path/to/network.agent.yaml", "r", encoding="utf-8") as f:
     cfg = yaml.safe_load(f)
@@ -147,17 +149,19 @@ while "__interrupt__" in result:
 
 ```text
 meta-agent/
-├── compiler.py          # Core CLI compiler & end-to-end .agent.yaml runner
-├── builder.py           # LLM-powered CLI generator that creates .agent.yaml designs from high-level requirements
-├── graph.py             # StateGraph builder, node executors, swarm Send fan-out, routing, error/healer/eval wrappers
-├── state.py             # TypedDict state builder, built-in reducers (append, dedupe_by_id), scope metadata
-├── nodes.py             # NetworkAgent class, harness merging, LLM/React agent initialization, human input nodes
-├── tools.py             # Dynamic tool loader, Pydantic args_schema binding, rate limiting, auth env injection
-├── memory.py            # Checkpointer/Store factory (in_memory, postgres) & context window management
-├── resilience.py        # Retries, TokenBucketRateLimiter, trace-reading SelfHealer & versioned GraphRegistry
-├── evaluators.py        # Built-in automatic & human-feedback evaluators
-├── optimization.py      # Metric target parsing, mutation strategies, HarnessRegistry, guarded optimize()
-├── utils.py             # Module resolver, deep_merge, pre-filters, Jinja2 prompt rendering, AST condition evaluator
+├── src/meta_agent_madcoderme/
+│   ├── __init__.py      # Public package exports & __version__
+│   ├── compiler.py      # Core CLI compiler & end-to-end .agent.yaml runner
+│   ├── builder.py       # LLM-powered CLI generator for .agent.yaml + companion Python modules
+│   ├── graph.py         # StateGraph builder, node executors, swarm Send fan-out, routing, error/healer/eval wrappers
+│   ├── state.py         # TypedDict state builder, built-in reducers (append, dedupe_by_id), scope metadata
+│   ├── nodes.py         # NetworkAgent class, harness merging, LLM/React agent initialization, human input nodes
+│   ├── tools.py         # Dynamic tool loader, Pydantic args_schema binding, rate limiting, auth env injection
+│   ├── memory.py        # Checkpointer/Store factory (in_memory, postgres) & context window management
+│   ├── resilience.py    # Retries, TokenBucketRateLimiter, trace-reading SelfHealer & versioned GraphRegistry
+│   ├── evaluators.py    # Built-in automatic & human-feedback evaluators
+│   ├── optimization.py  # Metric target parsing, mutation strategies, HarnessRegistry, guarded optimize()
+│   └── utils.py         # Module resolver, deep_merge, pre-filters, Jinja2 prompt rendering, AST condition evaluator
 ├── examples/
 │   └── basic_graph.py   # Minimal LangGraph sanity example
 ├── tests/

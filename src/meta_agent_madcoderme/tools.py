@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 from langchain_core.tools import tool, BaseTool
 
-from utils import resolve_module
-from resilience import TokenBucketRateLimiter, retry_call
+from .utils import resolve_module
+from .resilience import TokenBucketRateLimiter, retry_call
 
 
 def _guard_tool(tool_func, tool_info: Dict[str, Any]):
