@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "meta-agent"
+name = "py-meta-agent"
 version = "0.1.0"
 description = "A YAML-defined agent network compiler built on LangGraph."
 readme = "README.md"
