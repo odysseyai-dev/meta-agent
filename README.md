@@ -93,6 +93,11 @@ schema_version: "1.0"
 name: Hello Agent
 entry_node: ask
 
+runtime:
+  memory:
+    stores:
+      short_term: { type: in_memory, scope: run }
+
 state:
   question: { type: text }
   answer:   { type: text }
@@ -654,7 +659,3 @@ python -m unittest discover -s tests -q
 ## Contributing
 
 Issues and pull requests are welcome. Please run the test suite before submitting changes.
-
-## License
-
-Add your license here (for example, MIT) and include a `LICENSE` file in the repository.

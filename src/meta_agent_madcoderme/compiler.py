@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 import yaml
 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Send, interrupt, Command
 from langgraph.graph.message import add_messages
 
@@ -101,6 +102,10 @@ def main():
     tools = create_tools(agent_config.get('tools', {}), modules)
     agents = create_agents(agent_config.get('agents', {}), tools, harness_defaults=harness_defaults)
     checkpointer, store = create_memory(memory_config)
+    if checkpointer is None:
+        # Interactive CLI execution supports __interrupt__ / Command(resume=...),
+        # which requires a checkpointer even when runtime.memory is omitted.
+        checkpointer = InMemorySaver()
 
     workflow = create_graph(
         network_state,
@@ -118,7 +123,8 @@ def main():
     compiled.get_graph().print_ascii()
     
     default_state = { key: [] if key == "messages" else None for key in network_state.__annotations__.keys() }
-    default_state.update({"resume_file": "Abrar's Resume"})
+    if "resume_file" in network_state.__annotations__:
+        default_state["resume_file"] = "Abrar's Resume"
     result = compiled.invoke(default_state, config)
     
     while "__interrupt__" in result:

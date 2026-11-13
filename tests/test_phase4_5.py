@@ -358,6 +358,62 @@ nodes:
             finally:
                 sys.path.remove(tmpdir)
 
+    def test_compiler_resumes_interrupt_without_explicit_memory_config(self):
+        import sys
+        from langchain_core.messages import AIMessage
+        from src.meta_agent_madcoderme import compiler as compiler_mod
+
+        hello_yaml = """schema_version: "1.0"
+name: Hello Network
+entry_node: ask
+state:
+  question: { type: str }
+  answer: { type: str }
+agents:
+  answerer:
+    input: { question: state.question }
+    output: state.answer
+    harness:
+      system_instruction: "Answer concisely."
+nodes:
+  - id: ask
+    type: human_in_the_loop
+    input_type: text
+    input_state: question
+    routing:
+      - { when: "state.question != null", to: respond }
+  - id: respond
+    agent: answerer
+    routing:
+      - { when: "true", to: end }
+"""
+
+        class MockAnswerLLM:
+            def bind_tools(self, tools):
+                return self
+
+            def invoke(self, messages):
+                return AIMessage(content="SPHEREx is a NASA space telescope.")
+
+        def fake_create_agents(agent_list, tools, harness_defaults=None):
+            agent = NetworkAgent()
+            agent.id = "answerer"
+            agent.input = {"question": "state.question"}
+            agent.output = "state.answer"
+            agent.agent = MockAnswerLLM()
+            return [agent]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yaml_file = Path(tmpdir) / "hello.agent.yaml"
+            yaml_file.write_text(hello_yaml, encoding="utf-8")
+
+            with (
+                patch.object(sys, "argv", ["meta-agent", str(yaml_file)]),
+                patch.object(compiler_mod, "create_agents", side_effect=fake_create_agents),
+                patch("builtins.input", return_value="what is the spherex mission"),
+            ):
+                compiler_mod.main()
+
 
 if __name__ == "__main__":
     unittest.main()
