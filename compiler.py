@@ -1,6 +1,7 @@
 # compiler.py
 
 import os
+import sys
 import argparse
 from pathlib import Path
 import yaml
@@ -78,6 +79,10 @@ def main():
 
     if not yaml_path.exists():
         raise FileNotFoundError(f"YAML configuration file not found: {yaml_path}")
+
+    yaml_dir = str(yaml_path.resolve().parent)
+    if yaml_dir not in sys.path:
+        sys.path.insert(0, yaml_dir)
     
     with open(yaml_path, 'r') as file:
         try:

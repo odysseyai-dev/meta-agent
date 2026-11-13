@@ -49,7 +49,16 @@ runtime:
   self_healing:
     enabled: true
     endpoint: "/heal"                   # receives error reports (was top-level report_endpoint)
-    strategies: [retry, fallback_harness, fallback_model, escalate_to_human]
+    healer_model:
+      provider: google-genai
+      model: gemini-3.6-pro
+      temperature: 0.1
+      system_instruction: "Inspect the execution trace and node error, then output a minimal JSON graph patch to recover."
+    versioning:
+      enabled: true
+      max_versions: 10
+      auto_rollback_on_failure: true
+    strategies: [retry, fallback_harness, fallback_model, modify_graph, escalate_to_human]
     max_heal_attempts_per_node: 2
 
   self_improving:

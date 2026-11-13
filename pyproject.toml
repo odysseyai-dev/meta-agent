@@ -20,9 +20,11 @@ dependencies = [
 
 [project.scripts]
 meta-agent = "compiler:main"
+meta-agent-build = "builder:main"
 
 [tool.setuptools]
 py-modules = [
+    "builder",
     "compiler",
     "evaluators",
     "graph",

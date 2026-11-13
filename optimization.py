@@ -39,6 +39,20 @@ class MetricCheck:
     status: str          # "met" | "unmet" | "unknown" (no data is NOT the same as failing)
     violation: float     # distance from the target; 0 when met
 
+    @property
+    def met(self) -> bool:
+        return self.status == "met"
+
+    def __getitem__(self, key: str) -> Any:
+        if key == "met":
+            return self.met
+        return getattr(self, key)
+
+
+def target_met(value: Any, target: Any) -> bool:
+    """Return True if a metric value satisfies the comparator target."""
+    return check_metric("_", value, target).status == "met"
+
 
 def check_metric(key: str, value: Any, target: Any) -> MetricCheck:
     op, expected = parse_target(target)
@@ -292,3 +306,35 @@ def optimize(spec: Dict[str, Any], registry: HarnessRegistry, window: Window, *,
 
     registry.promote(candidate, parent_violation=violation)
     return {"changed": True, "action": "promote", "version": candidate.version, "diff": changed, "metrics": checks}
+
+
+def apply_optimization(
+    agent_obj: Any,
+    metrics: Dict[str, Any],
+    *,
+    sample_count: int = 1,
+    global_guardrails: Optional[Dict[str, Any]] = None,
+    approval_fn: Optional[Callable[[HarnessVersion], bool]] = None,
+) -> Dict[str, Any]:
+    """Run one optimization tick against an agent object using a lazily managed HarnessRegistry."""
+    spec = agent_obj.get_optimization() if hasattr(agent_obj, "get_optimization") else getattr(agent_obj, "optimization", {})
+    if not spec:
+        return {"changed": False, "reason": "no_optimization_spec"}
+
+    registry = getattr(agent_obj, "_harness_registry", None)
+    if registry is None:
+        registry = HarnessRegistry(agent_obj.harness)
+        agent_obj._harness_registry = registry
+
+    effective_guardrails = {"min_samples_before_mutation": 1, **(global_guardrails or {})}
+    decision = optimize(
+        spec,
+        registry,
+        Window(values=metrics, sample_count=sample_count),
+        global_guardrails=effective_guardrails,
+        approval_fn=approval_fn,
+    )
+    if decision.get("changed"):
+        agent_obj.harness = copy.deepcopy(registry.active.harness)
+        agent_obj.harness["version"] = registry.active.version
+    return decision

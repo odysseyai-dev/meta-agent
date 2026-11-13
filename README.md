@@ -1,6 +1,8 @@
 # Meta Agent
 
-Meta Agent is a YAML-defined agent network compiler built on [LangGraph](https://github.com/langchain-ai/langgraph) and [LangChain](https://github.com/langchain-ai/langchain). It compiles a declarative `schema_version: "1.0"` YAML specification into an executable `StateGraph` with typed state, custom reducers, parallel swarm fan-out (`Send`), sequential consumers, human-in-the-loop interrupts, AST-evaluated conditional routing, context policies, resilience wrappers, evaluators, and guarded harness optimization.
+Meta Agent enables people and AI agents to build production-grade agent harnesses and multi-agent networks simply by defining a high-level design in YAML (`*.agent.yaml`). At its core is a **compiler** (`compiler.py` / `graph.py`) that turns a declarative `schema_version: "1.0"` specification directly into an executable [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph`—wiring typed state and reducers, parallel swarm fan-out (`Send`), sequential consumers, human-in-the-loop interrupts, AST-evaluated routing, context policies, resilience, trace-driven self-healing with graph versioning, evaluators, and guarded harness optimization without hand-coding boilerplate orchestration.
+
+For rapid scaffolding from natural language, Meta Agent also provides a CLI builder (`builder.py`) that generates a valid `.agent.yaml` file from a high-level description using an LLM, ready to be compiled and executed immediately.
 
 ---
 
@@ -32,11 +34,29 @@ Edit `.env` and set `GEMINI_API_KEY` (and optional tool credentials such as `JOB
 
 ---
 
-## Usage
+## Usage: High-Level Design → Compile → Run
 
-### 1. CLI Entrypoint
+### 1. Generate a High-Level `.agent.yaml` Design & Companion Modules (`builder.py`)
 
-Installing the package exposes the `meta-agent` console script (`compiler:main`). Pass the path to a `.agent.yaml` configuration file as a positional argument:
+If you want to scaffold a complete, execution-ready network from high-level requirements instead of authoring YAML and boilerplate Python by hand, use `builder.py` (or the installed `meta-agent-build` console script). It calls a configured LLM to generate and validate the `.agent.yaml` file, then generates and syntax-checks the companion Python modules (`data_models.py`, `tool_defs.py`, and custom `hooks.py` / `evaluators.py` if referenced) in the same directory:
+
+```bash
+# Single-command generation of .agent.yaml + companion Python modules
+meta-agent-build "Build a customer support triage network with intake, specialist swarm analysis, human approval, and reply delivery" \
+  --name "Support Triage" \
+  --agents "intake_agent,specialist_agent,reply_agent" \
+  --features "swarm,human_in_the_loop,self_healing,optimization" \
+  -o support/support_triage.agent.yaml
+
+# Or interactive wizard mode (prompts for name, goal, agents, tools, features, output file)
+python builder.py -i
+```
+
+Pass `--yaml-only` if you only want the `.agent.yaml` file without generating companion Python modules. You can also choose the builder LLM with `--provider`, `--model`, and `--temperature` (defaults: `google-genai`, `gemini-3.6-flash`, `0.2`), or call `builder.generate_agent_yaml(spec)` and `builder.generate_companion_modules(yaml_text, spec)` from Python.
+
+### 2. Compile & Run a Network (`compiler.py`)
+
+The compiler (`compiler.py` / `meta-agent`) is the core entrypoint. Pass any `.agent.yaml` file as a positional argument:
 
 ```bash
 meta-agent tests/jobsearch.agent.yaml
@@ -44,15 +64,15 @@ meta-agent tests/jobsearch.agent.yaml
 python compiler.py tests/jobsearch.agent.yaml
 ```
 
-The CLI:
+The compiler:
 - Validates that the file path ends with `.agent.yaml` and exists on disk.
-- Compiles the state, tools, agents, memory stores, and `StateGraph` defined in the YAML file.
+- Compiles typed state, tools, agents (with inherited `harness_defaults`), memory stores, resilience/self-healing wrappers, evaluators, and the LangGraph `StateGraph`.
 - Prints the compiled ASCII graph (`print_ascii()`).
-- Invokes the workflow and prompts interactively whenever a human-in-the-loop `__interrupt__` is reached, then prints the final execution trace.
+- Executes the workflow and prompts interactively whenever a human-in-the-loop `__interrupt__` is reached, then prints the final execution trace.
 
-### 2. Using as a Python Package
+### 3. Using the Compiler Programmatically
 
-You can compile and run any YAML network definition programmatically using the compiler building blocks:
+You can embed the compiler directly in any Python application to load high-level `.agent.yaml` designs and run them:
 
 ```python
 import yaml
@@ -112,10 +132,11 @@ while "__interrupt__" in result:
     result = compiled.invoke(Command(resume=user_reply), config=run_config)
 ```
 
-### 3. Standalone Subsystem Modules
+### 4. Standalone Subsystem Modules
 
-- **`resilience.py`**: `retry_call(operation, config)` and `TokenBucketRateLimiter(calls, per_seconds)`.
-- **`optimization.py`**: `HarnessRegistry`, `Window`, `optimize(...)`, `validate_optimization(spec)`, and `STRATEGIES`.
+- **`builder.py`**: `generate_agent_yaml(spec, ...)`, `validate_agent_yaml(yaml_text)`, `ensure_agent_yaml_path(path_str)`, and CLI `main()`.
+- **`resilience.py`**: `retry_call(operation, config)`, `TokenBucketRateLimiter(calls, per_seconds)`, `GraphRegistry`, `GraphVersion`, `apply_graph_patch`, and `SelfHealer`.
+- **`optimization.py`**: `HarnessRegistry`, `Window`, `optimize(...)`, `apply_optimization(...)`, `validate_optimization(spec)`, `target_met`, and `STRATEGIES`.
 - **`memory.py`**: `create_memory(memory_config)` and `apply_context_policy(messages, context_policy, llm)`.
 - **`evaluators.py`**: Built-in `schema_validator`, `grounding_checker`, and `user_feedback`.
 - **`utils.py`**: `resolve_module`, `deep_merge`, `apply_pre_filters`, `extract_input_context`, `render_input_prompt`, `ConfigResolver`, and `evaluate_condition`.
@@ -126,13 +147,14 @@ while "__interrupt__" in result:
 
 ```text
 meta-agent/
-├── compiler.py          # CLI entrypoint & end-to-end YAML runner
-├── graph.py             # StateGraph builder, node executors, swarm Send fan-out, routing, error/eval wrappers
+├── compiler.py          # Core CLI compiler & end-to-end .agent.yaml runner
+├── builder.py           # LLM-powered CLI generator that creates .agent.yaml designs from high-level requirements
+├── graph.py             # StateGraph builder, node executors, swarm Send fan-out, routing, error/healer/eval wrappers
 ├── state.py             # TypedDict state builder, built-in reducers (append, dedupe_by_id), scope metadata
 ├── nodes.py             # NetworkAgent class, harness merging, LLM/React agent initialization, human input nodes
 ├── tools.py             # Dynamic tool loader, Pydantic args_schema binding, rate limiting, auth env injection
 ├── memory.py            # Checkpointer/Store factory (in_memory, postgres) & context window management
-├── resilience.py        # Error classification, exponential backoff retry_call, TokenBucketRateLimiter
+├── resilience.py        # Retries, TokenBucketRateLimiter, trace-reading SelfHealer & versioned GraphRegistry
 ├── evaluators.py        # Built-in automatic & human-feedback evaluators
 ├── optimization.py      # Metric target parsing, mutation strategies, HarnessRegistry, guarded optimize()
 ├── utils.py             # Module resolver, deep_merge, pre-filters, Jinja2 prompt rendering, AST condition evaluator
@@ -215,6 +237,21 @@ runtime:
     default_timeout_s: 60
     on_unhandled_error: route_to_healer
 
+  self_healing:
+    enabled: true
+    endpoint: "/heal"
+    healer_model:
+      provider: google-genai
+      model: gemini-3.6-pro
+      temperature: 0.1
+      system_instruction: "Inspect the execution trace and node error, then output a minimal JSON graph patch to recover."
+    versioning:
+      enabled: true
+      max_versions: 10
+      auto_rollback_on_failure: true
+    strategies: [retry, fallback_harness, fallback_model, modify_graph, escalate_to_human]
+    max_heal_attempts_per_node: 2
+
   self_improving:
     enabled: true
     guardrails:
@@ -228,7 +265,7 @@ runtime:
       require_offline_eval: false
 ```
 
-Additional schema blocks such as `concurrency`, `self_healing`, and `monitoring` may also be declared under `runtime` for configuration completeness.
+Additional schema blocks such as `concurrency` and `monitoring` may also be declared under `runtime` for configuration completeness. When `runtime.self_healing.enabled` is `true`, `create_graph()` attaches a `GraphRegistry` (`workflow.__graph_registry__`) and `SelfHealer` (`workflow.__self_healer__`) configured with `healer_model`. On unhandled node errors, `SelfHealer` reads execution traces (`_trace` and `messages`), proposes a JSON graph patch (`node_updates`, `add_nodes`, `remove_nodes`, `reroute`, `goto`), records a new `GraphVersion` (`0 -> 1 -> ...`, preserving prior versions as `superseded` and supporting `rollback()`), and routes via LangGraph `Command(goto=..., update={"_error": ..., "_heal": ...})`.
 
 ---
 
@@ -450,7 +487,7 @@ Defines graph topology, execution patterns, interrupts, error handling, and cond
 #### Routing & Error Handling
 
 - **`routing`**: List of `{ when: <expr_or_dict>, to: <node_id | [node_ids] | end> }`, evaluated in order. `to` may be a list for parallel fan-out, or `end` / `END` / `null` for LangGraph `END`. Optional `default` sets the fallback target (defaults to `END`).
-- **`on_error`**: `{ action: route_to_healer, then: <node_id> }`. If a node raises an unhandled exception after retries are exhausted, execution routes via `Command(goto=<then>, update={"__error__": ...})`.
+- **`on_error`**: `{ action: route_to_healer, then: <node_id> }`. If a node raises an unhandled exception after retries are exhausted, execution routes via `Command(goto=<then>, update={"_error": ...})`. When `runtime.self_healing.enabled` is `true`, `SelfHealer` inspects the trace, versions any proposed graph patch in `GraphRegistry`, and includes `"_heal": {"version": ..., "patch": ...}` in the state update.
 
 ---
 

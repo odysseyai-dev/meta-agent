@@ -12,8 +12,8 @@ from langgraph.types import interrupt, Send, Command
 from memory import apply_context_policy
 from nodes import NetworkAgent, create_human_node
 from utils import ConfigResolver, render_input_prompt, evaluate_condition, apply_pre_filters, extract_input_context, deep_merge, resolve_module
-from resilience import retry_call
-from optimization import optimize
+from resilience import retry_call, GraphRegistry, SelfHealer
+from optimization import apply_optimization
 
 def make_node_executor(agent_obj: NetworkAgent, node_info: Optional[Dict[str, Any]] = None):
     """Executes a single standard or periodic agent node."""
@@ -401,9 +401,16 @@ def create_graph(
     runtime_config = runtime_config or {}
     resilience_config = runtime_config.get("resilience", {}) or {}
     default_retry = resilience_config.get("default_retry", {}) or {}
+    self_healing_config = runtime_config.get("self_healing", {}) or {}
+    versioning_cfg = self_healing_config.get("versioning", {}) or {}
+    graph_registry = GraphRegistry(network_nodes, max_versions=versioning_cfg.get("max_versions"))
+    self_healer = SelfHealer(self_healing_config, graph_registry)
     global_guardrails = (runtime_config.get("self_improving", {}) or {}).get("guardrails", {}) or {}
     evaluator_config = evaluator_config or {}
     modules_config = modules_config or {}
+
+    workflow.__graph_registry__ = graph_registry
+    workflow.__self_healer__ = self_healer
 
     evaluator_module = resolve_module(modules_config.get("evaluators", "evaluators"))
 
@@ -441,7 +448,7 @@ def create_graph(
                 if agent_obj and isinstance(result, dict):
                     metrics = run_evaluator(agent_obj, result.get(agent_obj.get_output_key()), state)
                     if metrics:
-                        optimize(
+                        apply_optimization(
                             agent_obj,
                             metrics,
                             sample_count=state.get("__sample_count__", 0),
@@ -452,8 +459,34 @@ def create_graph(
             try:
                 return retry_call(execute, retry_policy)
             except Exception as error:
+                should_heal = self_healing_config.get("enabled") and (
+                    error_spec.get("action") == "route_to_healer"
+                    or resilience_config.get("on_unhandled_error") == "route_to_healer"
+                    or bool(error_target)
+                )
+                if should_heal:
+                    heal_result = self_healer.heal(
+                        state,
+                        error,
+                        node_info.get("id", ""),
+                        node_info=node_info,
+                    )
+                    dest = heal_result.get("goto") or error_target
+                    if dest:
+                        update = {
+                            "_error": {
+                                "node": node_info.get("id"),
+                                "type": type(error).__name__,
+                                "message": str(error),
+                            },
+                            "_heal": {
+                                "version": heal_result.get("version"),
+                                "patch": heal_result.get("patch"),
+                            },
+                        }
+                        return Command(goto=dest, update=update)
                 if error_target:
-                    update = {"__error__": {"node": node_info.get("id"), "type": type(error).__name__, "message": str(error)}}
+                    update = {"_error": {"node": node_info.get("id"), "type": type(error).__name__, "message": str(error)}}
                     return Command(goto=error_target, update=update)
                 raise
 
