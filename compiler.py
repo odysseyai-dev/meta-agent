@@ -1,6 +1,7 @@
 # compiler.py
 
 import os
+import argparse
 from pathlib import Path
 import yaml
 
@@ -64,11 +65,19 @@ def print_result(result):
             print(f"{key}: {value}")
 
 def main():
+    parser = argparse.ArgumentParser(description="Meta-Agent Compiler")
+    parser.add_argument("file", default=None, help="Path to the agent YAML configuration file", nargs="?")
+    args = parser.parse_args()
+
     agent_config = None
-    project_root = Path(__file__).resolve().parent
-    yaml_path = project_root / 'tests' / 'jobsearch.agent.yaml'
+    if args.file:
+        if not args.file.endswith(".agent.yaml"):
+            raise ValueError("The configuration file must have a .agent.yaml extension.")
+        
+        yaml_path = Path(args.file)
+
     if not yaml_path.exists():
-        yaml_path = project_root / 'jobsearch.agent.yaml'
+        raise FileNotFoundError(f"YAML configuration file not found: {yaml_path}")
     
     with open(yaml_path, 'r') as file:
         try:

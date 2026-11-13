@@ -13,7 +13,7 @@ from memory import apply_context_policy
 from nodes import NetworkAgent, create_human_node
 from utils import ConfigResolver, render_input_prompt, evaluate_condition, apply_pre_filters, extract_input_context, deep_merge, resolve_module
 from resilience import retry_call
-from optimization import apply_optimization
+from optimization import optimize
 
 def make_node_executor(agent_obj: NetworkAgent, node_info: Optional[Dict[str, Any]] = None):
     """Executes a single standard or periodic agent node."""
@@ -441,7 +441,7 @@ def create_graph(
                 if agent_obj and isinstance(result, dict):
                     metrics = run_evaluator(agent_obj, result.get(agent_obj.get_output_key()), state)
                     if metrics:
-                        apply_optimization(
+                        optimize(
                             agent_obj,
                             metrics,
                             sample_count=state.get("__sample_count__", 0),
